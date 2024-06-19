@@ -1,0 +1,143 @@
+#include <SoftwareSerial.h>
+#include "DHT.h"
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+// Definição dos pinos e tipos de sensores DHT11
+#define DHTPIN_INT 2 // Pino digital para o sensor interno
+#define DHTPIN_EXT 3 // Pino digital para o sensor externo
+#define DHTTYPE DHT11 // Definindo o tipo de sensor DHT
+
+// Instâncias dos sensores DHT11
+DHT dhtInterno(DHTPIN_INT, DHTTYPE);
+DHT dhtExterno(DHTPIN_EXT, DHTTYPE);
+
+// Definição dos pinos dos relés
+#define RELE1_PIN 4 // Pino do relé 1
+#define RELE2_PIN 5 // Pino do relé 2
+
+// Instância do display LCD I2C (endereço padrão 0x27, alterar se necessário)
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+
+// Pinos RX e TX para o módulo Bluetooth
+SoftwareSerial bluetooth(6, 7); // RX, TX
+
+void setup() {
+  // Inicialização da comunicação serial para debug
+  Serial.begin(9600);
+
+  // Inicialização da comunicação serial para o Bluetooth
+  bluetooth.begin(9600);
+
+  // Inicialização dos sensores DHT11
+  dhtInterno.begin();
+  dhtExterno.begin();
+  
+  // Configuração dos pinos dos relés como saída
+  pinMode(RELE1_PIN, OUTPUT);
+  pinMode(RELE2_PIN, OUTPUT);
+
+  // Inicialização dos relés como desligados
+  digitalWrite(RELE1_PIN, LOW);
+  digitalWrite(RELE2_PIN, LOW);
+
+  // Inicialização do display LCD
+  lcd.begin(16, 2);  // Inicialização com o número de colunas e linhas
+  lcd.backlight();
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Iniciando...");
+}
+
+void loop() {
+  // Leitura do sensor interno
+  float tempInterna = dhtInterno.readTemperature();
+  float umidadeInterna = dhtInterno.readHumidity();
+  
+  // Verifica se as leituras são válidas
+  if (isnan(tempInterna) || isnan(umidadeInterna)) {
+    Serial.println("Falha na leitura do sensor interno!");
+    lcd.setCursor(0, 0);
+    lcd.print("Erro no sensor Int");
+    return;
+  }
+
+  // Leitura do sensor externo
+  float tempExterna = dhtExterno.readTemperature();
+  float umidadeExterna = dhtExterno.readHumidity();
+  
+  // Verifica se as leituras são válidas
+  if (isnan(tempExterna) || isnan(umidadeExterna)) {
+    Serial.println("Falha na leitura do sensor externo!");
+    lcd.setCursor(0, 1);
+    lcd.print("Erro no sensor Ext");
+    return;
+  }
+
+  // Imprime as leituras no Serial Monitor e envia via Bluetooth
+  String sensorData = String("{\"Sensor1\":{\"Temperatura\":") + tempInterna +
+                      ",\"Umidade\":" + umidadeInterna +
+                      "},\"Sensor2\":{\"Temperatura\":" + tempExterna +
+                      ",\"Umidade\":" + umidadeExterna + "}}";
+
+  Serial.println(sensorData);
+  bluetooth.println(sensorData);
+
+  // Controle do relé 1 baseado na temperatura interna
+  if (tempInterna > 25) {
+    digitalWrite(RELE1_PIN, HIGH); // Liga o relé 1
+  } else {
+    digitalWrite(RELE1_PIN, LOW); // Desliga o relé 1
+  }
+
+  // Controle do relé 2 baseado na umidade interna
+  if (umidadeInterna < 30) {
+    digitalWrite(RELE2_PIN, HIGH); // Liga o relé 2
+  } else if (umidadeInterna >= 75) {
+    digitalWrite(RELE2_PIN, LOW); // Desliga o relé 2
+  }
+
+  // Atualiza o display LCD com as leituras dos sensores
+  lcd.clear();
+  lcd.setCursor(0, 0);
+  lcd.print("Int: ");
+  lcd.print(tempInterna);
+  lcd.print("C ");
+  lcd.print(umidadeInterna);
+  lcd.print("%");
+  
+  lcd.setCursor(0, 1);
+  lcd.print("Ext: ");
+  lcd.print(tempExterna);
+  lcd.print("C ");
+  lcd.print(umidadeExterna);
+  lcd.print("%");
+
+  // Verifica se há comandos do Bluetooth
+  if (bluetooth.available()) {
+    char command = bluetooth.read();
+    Serial.print("Recebido comando Bluetooth: ");
+    Serial.println(command);
+    if (command == 'L') {
+      digitalWrite(RELE1_PIN, HIGH); // Liga o relé 1
+      Serial.println("Relé 1 ligado");
+    } else if (command == 'K') {
+      digitalWrite(RELE1_PIN, LOW); // Desliga o relé 1
+      Serial.println("Relé 1 desligado");
+    } else if (command == 'U') {
+      digitalWrite(RELE2_PIN, HIGH);
+      delay(100);
+      digitalWrite(RELE2_PIN, LOW);
+       // Liga o relé 2
+      Serial.println("Relé 2 ligado");
+    } else if (command == 'V') {
+      digitalWrite(RELE2_PIN, HIGH);
+      delay(100);
+      digitalWrite(RELE2_PIN, LOW); // Desliga o relé 2
+      Serial.println("Relé 2 desligado");
+    }
+  }
+
+  // Aguarda 2 segundos antes de realizar a próxima leitura
+  delay(2000);
+}

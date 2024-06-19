@@ -1,0 +1,145 @@
+#include <Arduino.h>
+#include <DHT.h>
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+#define DHTPIN_INT 2     // Pino digital ao qual o sensor interno está conectado
+#define DHTPIN_EXT 3     // Pino digital ao qual o sensor externo está conectado
+#define DHTTYPE DHT11    // Tipo do sensor DHT (DHT11 ou DHT22)
+
+DHT dhtInt(DHTPIN_INT, DHTTYPE); // Inicializa o sensor interno DHT
+DHT dhtExt(DHTPIN_EXT, DHTTYPE); // Inicializa o sensor externo DHT
+
+// Configuração do LCD I2C
+LiquidCrystal_I2C lcd(0x27, 16, 2); // Endereço 0x27 para o módulo I2C, 16 colunas e 2 linhas
+
+// Variáveis para controle de tempo
+unsigned long previousMillis = 0;
+const long interval = 2000; // Intervalo de 2 segundos (2000 milissegundos)
+
+// Variável de estado para alternar entre temperatura interna e externa
+bool displayInterno = true;
+
+// Variáveis para controle do modo automático
+bool modoAutomatico = false;
+const float tempLimiteLigarCooler = 23.0;    // Temperatura acima da qual liga o cooler
+const float tempLimiteDesligarCooler = 22.0; // Temperatura abaixo da qual desliga o cooler
+const float umidLimiteLigar = 55.0;          // Umidade abaixo da qual liga o umidificador
+const float umidLimiteDesligar = 70.0;       // Umidade acima da qual desliga o umidificador
+
+void setup() {
+    Serial.begin(9600);
+    pinMode(4, OUTPUT); // Relé para o cooler
+    pinMode(5, OUTPUT); // Relé para o umidificador
+    dhtInt.begin();     // Inicializa o sensor DHT interno
+    dhtExt.begin();     // Inicializa o sensor DHT externo
+
+    // Inicializa o LCD
+    lcd.init();
+    lcd.backlight(); // Ativa a luz de fundo do LCD
+
+    // Mensagem inicial no LCD
+    lcd.setCursor(0, 0);
+    lcd.print("Int: Temp: -- C");
+    lcd.setCursor(0, 1);
+    lcd.print("Int: Umidade: --%");
+}
+
+void loop() {
+    if (Serial.available() > 0) {
+        char command = Serial.read();
+        if (command == 'L') {
+            digitalWrite(4, HIGH); // Liga o cooler
+        } else if (command == 'K') {
+            digitalWrite(4, LOW); // Desliga o cooler
+        } else if (command == 'U') {
+            digitalWrite(5, HIGH);
+            delay(100);
+            digitalWrite(5, LOW); // Liga o umidificador
+        } else if (command == 'V') {
+            digitalWrite(5, HIGH);
+            delay(100);
+            digitalWrite(5, LOW); // Desliga o umidificador
+        } else if (command == 'A') {
+            modoAutomatico = !modoAutomatico; // Alterna o modo automático
+            Serial.println(modoAutomatico ? "ativado" : "desativado");
+        } else if (command == 'M') {
+            modoAutomatico = false; // Desativa o modo automático
+        }
+    }
+
+    unsigned long currentMillis = millis();
+
+    if (currentMillis - previousMillis >= interval) {
+        previousMillis = currentMillis;
+
+        // Realiza a leitura dos sensores
+        float temperatureInt = dhtInt.readTemperature(); // Leitura da temperatura interna
+        float humidityInt = dhtInt.readHumidity();       // Leitura da umidade interna
+        float temperatureExt = dhtExt.readTemperature(); // Leitura da temperatura externa
+        float humidityExt = dhtExt.readHumidity();       // Leitura da umidade externa
+
+        // Verifica se a leitura foi bem-sucedida
+        if (isnan(temperatureInt) || isnan(humidityInt) || isnan(temperatureExt) || isnan(humidityExt)) {
+            Serial.println("Falha ao ler os sensores DHT!");
+        } else {
+            // Envia os dados dos sensores para o Python/Tkinter
+            Serial.print("{\"SensorInt\": {\"Temperatura\": ");
+            Serial.print(temperatureInt);
+            Serial.print(", \"Umidade\": ");
+            Serial.print(humidityInt);
+            Serial.print("}, \"SensorExt\": {\"Temperatura\": ");
+            Serial.print(temperatureExt);
+            Serial.print(", \"Umidade\": ");
+            Serial.print(humidityExt);
+            Serial.println("}}");
+
+            // Atualiza o LCD com os valores lidos
+            if (displayInterno) {
+                lcd.setCursor(0, 0);
+                lcd.print("Int: Temp: ");
+                lcd.print(temperatureInt);
+                lcd.print(" C ");
+                lcd.setCursor(0, 1);
+                lcd.print("Int: Umidade: ");
+                lcd.print(humidityInt);
+                lcd.print("% ");
+            } else {
+                lcd.setCursor(0, 0);
+                lcd.print("Ext: Temp: ");
+                lcd.print(temperatureExt);
+                lcd.print(" C ");
+                lcd.setCursor(0, 1);
+                lcd.print("Ext: Umidade: ");
+                lcd.print(humidityExt);
+                lcd.print("% ");
+            }
+
+            // Controle automático de dispositivos
+            if (modoAutomatico) {
+                // Controle do cooler
+                if (temperatureInt > tempLimiteLigarCooler) {
+                    digitalWrite(4, HIGH); // Liga o cooler
+                } else if (temperatureInt < tempLimiteDesligarCooler) {
+                    digitalWrite(4, LOW); // Desliga o cooler
+                }
+
+                // Controle do umidificador
+                if (humidityInt < umidLimiteLigar) {
+                    digitalWrite(5, HIGH);
+                    delay(100);
+                    digitalWrite(5, LOW); // Liga o umidificador
+                } else if (humidityInt > umidLimiteDesligar) {
+                    digitalWrite(5, HIGH);
+                    delay(100);
+                    digitalWrite(5, LOW); // Desliga o umidificador
+                }
+            }
+
+            // Alterna entre interno e externo no próximo ciclo
+            displayInterno = !displayInterno;
+        }
+    }
+
+    delay(100); // Pequeno atraso para estabilidade do loop
+}
